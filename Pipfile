@@ -1,0 +1,19 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[dev-packages]
+
+[packages]
+torch = "==1.6.0"
+torchvision = "==0.7.0"
+pytorch-lightning = "==1.0.0"
+pandas = "*"
+segmentation-models-pytorch = "*"
+python-dotenv = "*"
+albumentations = "*"
+install = "*"
+
+[requires]
+python_version = "3.8"
