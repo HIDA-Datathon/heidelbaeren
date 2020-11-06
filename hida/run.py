@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 import torch
+import numpy as np
 from scipy.special import softmax
 
 from torch.nn import functional as F
@@ -34,7 +35,6 @@ class HidaImageSegmentation(pl.LightningModule):
         self.save_hyperparameters()
 
         self.classes = classes
-
 
         if self.hparams.architecture == 'fpn':
             self.model = smp.FPN(
@@ -68,9 +68,10 @@ class HidaImageSegmentation(pl.LightningModule):
 
     def calc_step(self, batch, batch_idx, mode='train'):
         #x = x.reshape(8,3,600,800)
-        x, y = batch
-        prediction = self.model(x)
         if mode != 'test':
+            x, y = batch
+            prediction = self.model(x)
+
             loss = self.loss(prediction, y)
             #self.log(f'{mode}_loss_step', loss, on_step=True)
 
@@ -86,13 +87,24 @@ class HidaImageSegmentation(pl.LightningModule):
                     self.logger.experiment.add_image(f"{mode}_{c}_label", y[0, idx, :, :].unsqueeze(0).gt(0.5), self.global_step + 1)
             return {'loss': loss }
         else:
-            pass
+            prediction = self.model(batch)
+
+
+            for idx, (i, p) in enumerate(zip(batch, prediction)):
+                i = i.detach().cpu()
+                for t, m, s in zip(i,[ 0.485, 0.456, 0.406 ], [ 0.229, 0.224, 0.225 ]): # TODO get encoder_preprocessing_params to make this adaptable
+                    t.mul_(s).add_(m)
+                save_obj = {
+                    'img': i.numpy(),
+                    'prediction': p.cpu().numpy()
+                }
+                with open(f'{self.logger.log_dir}/images/{(batch_idx*self.hparams.test_batch_size)+idx}.npz', 'wb') as f:
+                    np.savez(f, **save_obj)
 
     def calc_epoch_end(self, outputs, mode):
-        avg_loss = torch.stack([x['loss'] for x in outputs]).mean()
-        self.log(f'{mode}_loss', avg_loss, on_epoch=True)
-
-        pass
+        if mode != 'test':
+            avg_loss = torch.stack([x['loss'] for x in outputs]).mean()
+            self.log(f'{mode}_loss', avg_loss, on_epoch=True)
 
     def training_step(self, batch, batch_idx):
         return self.calc_step(batch, batch_idx, mode='train')
@@ -162,7 +174,8 @@ def cli_main():
                         help="random seed for training")
 
     # Dataset
-    parser.add_argument("--dataset_size", type=int, default=int(get_os('DATASET_SIZE', 256)))
+    parser.add_argument("--dataset_size_x", type=int, default=int(get_os('DATASET_SIZE_X', 256)))
+    parser.add_argument("--dataset_size_y", type=int, default=int(get_os('DATASET_SIZE_Y', 256)))
     parser.add_argument("--vflip_chance", type=float, default=float(get_os('VFLIP_CHANCE', 0.5)))
     parser.add_argument("--rotation_chance", type=float, default=float(get_os('ROTATION_CHANCE', 0.5)))
 
@@ -173,6 +186,8 @@ def cli_main():
     print(args)
     logger = TensorBoardLogger(args.log_dir, name=args.name, version=args.version)
     lr_logger = LearningRateMonitor(logging_interval='step')
+
+    os.makedirs(f'{logger.log_dir}/images/', exist_ok=True)
 
     # DEFAULTS used by the Trainer
     checkpoint_callback = ModelCheckpoint(
@@ -185,11 +200,12 @@ def cli_main():
     )
 
     model = HidaImageSegmentation(**vars(args), classes=NeuronSegmentationDataset.get_classes())
+    #model = HidaImageSegmentation.load_from_checkpoint("/home/ksquare/repositories/datathon/experiments/logs/countrython/test/countrython_test-checkpoints-v0.ckpt", **vars(args))
 
     # preprocessing_fn = smp.encoders.get_preprocessing_fn(args.encoder, args.encoder_weights)
     preprocessing_params = smp.encoders.get_preprocessing_params(args.encoder, args.encoder_weights)
 
-    transform_args = {"vflip_chance": args.vflip_chance, "rotation_chance": args.rotation_chance, "rotation_angle": 30, "size": args.dataset_size}
+    transform_args = {"vflip_chance": args.vflip_chance, "rotation_chance": args.rotation_chance, "rotation_angle": 30, "size_x": args.dataset_size_x, "size_y": args.dataset_size_y}
 
     dm = HidaDataLoader(
         transform_args=transform_args,
@@ -213,7 +229,7 @@ def cli_main():
 
     trainer.fit(model, dm)
 
-    # result = trainer.test(datamodule=dm)
+    trainer.test(model, datamodule=dm)
     # print(result)
 
 

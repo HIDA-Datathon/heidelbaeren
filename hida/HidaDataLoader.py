@@ -58,6 +58,8 @@ class HidaDataLoader(pl.LightningDataModule):
         
         self.dims = (3, 600, 800)
 
+    def prepare_data(self, *args, **kwargs):
+        pass
     def setup(self, stage=None):
 
         # Assign train/val datasets for use in dataloaders
@@ -67,7 +69,7 @@ class HidaDataLoader(pl.LightningDataModule):
             
         # Assign test dataset for use in dataloader(s)
         if stage == 'test' or stage is None:
-            self.test_data = NeuronSegmentationDataset(self.data_dir, preprocessing=self.preprocessing, transform_args=self.transform_args)
+            self.test_data = NeuronSegmentationDataset(self.data_dir, folds=None, preprocessing=self.preprocessing, transform_args=self.transform_args)
 
     def train_dataloader(self):
         return DataLoader(self.train_data, pin_memory=True, batch_size=self.train_batch_size, num_workers=self.num_workers, shuffle=True, drop_last=True)
@@ -76,7 +78,7 @@ class HidaDataLoader(pl.LightningDataModule):
         return DataLoader(self.val_data, pin_memory=True, batch_size=self.val_batch_size, num_workers=self.num_workers)
 
     def test_dataloader(self):
-        return DataLoader(self.test_data, pin_memory=True, batch_size=self.test_batch_size, num_worker=self.num_workers)
+        return DataLoader(self.test_data, pin_memory=True, batch_size=self.test_batch_size, num_workers=self.num_workers)
         
     @staticmethod
     def add_data_module_specific_args(parent_parser):

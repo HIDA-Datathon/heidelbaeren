@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 from PIL import Image
 
-DEFAULT_TRANSFORM_ARGS = {"vflip_chance":0.5, "rotation_chance": 0.5, "rotation_angle": 30, "size": 256}
+DEFAULT_TRANSFORM_ARGS = {"vflip_chance":0.5, "rotation_chance": 0.5, "rotation_angle": 30, "size_x": 256, "size_y": 256}
 DATA_ROOT_PATH = "/home/ksquare/repositories/datathon/data/ufz_im_challenge/"
 
 
@@ -67,9 +67,9 @@ class NeuronSegmentationDataset(VisionDataset):
                 mask = TF.vflip(mask)
         
         # resize
-        img = TF.resize(img, [self.transform_args["size"], self.transform_args["size"]] )
+        img = TF.resize(img, [self.transform_args["size_x"], self.transform_args["size_y"]] )
         if mask is not None:
-            mask = TF.resize(mask, [self.transform_args["size"], self.transform_args["size"]] )
+            mask = TF.resize(mask, [self.transform_args["size_x"], self.transform_args["size_y"]] )
         return img, mask
 
     def __len__(self):
@@ -92,7 +92,8 @@ class NeuronSegmentationDataset(VisionDataset):
         
         # apply transforms
         img, mask = self.my_transform(img, mask)
-
+        if mask is None:
+            return img
         return img, mask
         
 
