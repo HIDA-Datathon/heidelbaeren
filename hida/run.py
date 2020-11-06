@@ -201,7 +201,7 @@ def cli_main():
     ) 
     
     trainer = pl.Trainer(
-        fast_dev_run=True,
+        #fast_dev_run=True,
         callbacks=[lr_logger],
         val_check_interval=args.val_check_interval,
         check_val_every_n_epoch=args.check_val_every_n_epoch,
