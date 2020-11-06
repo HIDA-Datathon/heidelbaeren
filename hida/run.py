@@ -4,13 +4,15 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 import torch
-import pytorch_lightning as pl
+from scipy.special import softmax
+
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, random_split
 
 from torchvision.datasets.mnist import MNIST
 from torchvision import transforms
 
+import pytorch_lightning as pl
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -30,22 +32,34 @@ class HidaImageSegmentation(pl.LightningModule):
     def __init__(self, encoder, encoder_weights, classes, activation, learning_rate=1e-3, **kwargs):
         super().__init__()
         self.save_hyperparameters()
-        # create segmentation model with pretrained encoder
-        # self.model = smp.FPN(
-        #     encoder_name=encoder, 
-        #     # encoder_weights=encoder_weights, 
-        #     classes=len(classes), 
-        #     # activation=activation,
-        # )
 
-        self.model = smp.Unet('resnet34', classes=len(classes))
+        self.classes = classes
 
-        # self.model = smp.FPN(
-        #     encoder_name=encoder, 
-        #     encoder_weights=encoder_weights, 
-        #     classes=len(classes), 
-        #     activation=activation,
-        # )
+
+        if self.hparams.architecture == 'fpn':
+            self.model = smp.FPN(
+                encoder_name=encoder, 
+                encoder_weights=encoder_weights, 
+                classes=len(classes), 
+                activation=activation,
+            )
+        elif self.hparams.architecture == 'pan':
+            self.model = smp.PAN(
+                encoder_name=encoder, 
+                encoder_weights=encoder_weights, 
+                classes=len(classes), 
+                activation=activation,
+            )
+        elif self.hparams.architecture == 'pspnet':
+            self.model = smp.PSPNet(
+                encoder_name=encoder, 
+                encoder_weights=encoder_weights, 
+                classes=len(classes), 
+                activation=activation,
+            )
+        else:
+            raise NameError('')
+
 
         self.loss = smp.utils.losses.DiceLoss()
 
@@ -58,12 +72,18 @@ class HidaImageSegmentation(pl.LightningModule):
         prediction = self.model(x)
         if mode != 'test':
             loss = self.loss(prediction, y)
-            self.log(f'{mode}_losseeee', loss, on_step=True)
+            #self.log(f'{mode}_loss_step', loss, on_step=True)
 
             if batch_idx == 0:
-                self.logger.experiment.add_image(f"{mode}_image", x[0, :, :, :], self.global_step + 1)
-                self.logger.experiment.add_image(f"{mode}_label", prediction[0, :, :], self.global_step + 1)
-                self.logger.experiment.add_image(f"{mode}_prediction", x[0, :, :], self.global_step + 1)
+
+                # torchvision.transforms.Grayscale(num_output_channels=1)
+                img = x[0].detach().cpu()
+                for t, m, s in zip(img,[ 0.485, 0.456, 0.406 ], [ 0.229, 0.224, 0.225 ]): # TODO get encoder_preprocessing_params to make this adaptable
+                    t.mul_(s).add_(m)
+                self.logger.experiment.add_image(f"{mode}_image", img, self.global_step + 1)
+                for idx, c in enumerate(self.classes):
+                    self.logger.experiment.add_image(f"{mode}_{c}_prediction", prediction[0, idx , :, :].unsqueeze(0).gt(0.5), self.global_step + 1)
+                    self.logger.experiment.add_image(f"{mode}_{c}_label", y[0, idx, :, :].unsqueeze(0).gt(0.5), self.global_step + 1)
             return {'loss': loss }
         else:
             pass
@@ -95,20 +115,22 @@ class HidaImageSegmentation(pl.LightningModule):
     def configure_optimizers(self):
         # self.hparams available because we called self.save_hyperparameters()
         optim = torch.optim.Adam(self.model.parameters(), lr=self.hparams.learning_rate)
+        #return torch.optim.Adam(self.model.parameters(), lr=self.hparams.learning_rate)
         return {
             'optimizer': optim,
-            'lr_scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optim, mode='min', factor=0.1, patience=10, threshold=0.0001, threshold_mode='rel', cooldown=10, min_lr=1.e-7, eps=1e-08, verbose=False),
+            'lr_scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optim, mode='min', factor=0.1, patience=5, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=1.e-7, eps=1e-08, verbose=False),
             'monitor': 'val_loss'
         }
-        # return torch.optim.Adam(self.model.parameters(), lr=self.hparams.learning_rate)
 
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = ArgumentParser(parents=[parent_parser], add_help=False)
-        parser.add_argument('--learning_rate', type=float, default=0.0001)
-        parser.add_argument('--encoder', type=str, default='se_resnext50_32x4d')
-        parser.add_argument('--encoder_weights', type=str, default='imagenet')
-        parser.add_argument('--activation', type=str, default='sigmoid')
+        parser.add_argument('--learning_rate', type=float, default=get_os('LEARNING_RATE', 0.0001))
+        parser.add_argument('--encoder', type=str, default=get_os('ENCODER', 'se_resnext50_32x4d'))
+        parser.add_argument('--encoder_weights', type=str, default=get_os('ENCODER_WEIGHTS', 'imagenet'))
+        parser.add_argument('--activation', type=str, default=get_os('ACTIVATION', 'sigmoid'))
+        parser.add_argument('--architecture', type=str, default=get_os('ARCHITECTURE', 'fpn'))
+        
         return parser
 
 def cli_main():
@@ -139,6 +161,11 @@ def cli_main():
     parser.add_argument("--max_epochs", type=int, default=int(get_os('MAX_EPOCHS', 3)),
                         help="random seed for training")
 
+    # Dataset
+    parser.add_argument("--dataset_size", type=int, default=int(get_os('DATASET_SIZE', 256)))
+    parser.add_argument("--vflip_chance", type=float, default=float(get_os('VFLIP_CHANCE', 0.5)))
+    parser.add_argument("--rotation_chance", type=float, default=float(get_os('ROTATION_CHANCE', 0.5)))
+
     parser = HidaDataLoader.add_data_module_specific_args(parser)
     parser = HidaImageSegmentation.add_model_specific_args(parser)
     args = parser.parse_args()
@@ -157,13 +184,12 @@ def cli_main():
         prefix=f'{args.name}_{args.version}'
     )
 
-    transform_args = {"vflip_chance":0.5, "rotation_chance": 0.5, "rotation_angle": 30, "normalize_mean": [0.485, 0.456, 0.406], "normalize_std": [0.229, 0.224, 0.225]}
-
-
     model = HidaImageSegmentation(**vars(args), classes=NeuronSegmentationDataset.get_classes())
 
     # preprocessing_fn = smp.encoders.get_preprocessing_fn(args.encoder, args.encoder_weights)
     preprocessing_params = smp.encoders.get_preprocessing_params(args.encoder, args.encoder_weights)
+
+    transform_args = {"vflip_chance": args.vflip_chance, "rotation_chance": args.rotation_chance, "rotation_angle": 30, "size": args.dataset_size}
 
     dm = HidaDataLoader(
         transform_args=transform_args,
@@ -175,7 +201,7 @@ def cli_main():
     ) 
     
     trainer = pl.Trainer(
-        #fast_dev_run=True,
+        fast_dev_run=True,
         callbacks=[lr_logger],
         val_check_interval=args.val_check_interval,
         check_val_every_n_epoch=args.check_val_every_n_epoch,

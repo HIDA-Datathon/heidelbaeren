@@ -42,6 +42,7 @@ class HidaDataLoader(pl.LightningDataModule):
         train_batch_size=8,
         val_batch_size=8,
         test_batch_size=8,
+        num_workers=16
     ):
 
         super().__init__()
@@ -50,9 +51,10 @@ class HidaDataLoader(pl.LightningDataModule):
         self.train_batch_size = train_batch_size
         self.val_batch_size = val_batch_size
         self.test_batch_size = test_batch_size
+        self.num_workers=num_workers
 
         self.transform_args = transform_args
-        self.preprocessing = HidaDataLoader.get_preprocessing(preprocessing)
+        self.preprocessing = preprocessing #HidaDataLoader.get_preprocessing(preprocessing)
         
         self.dims = (3, 600, 800)
 
@@ -68,13 +70,13 @@ class HidaDataLoader(pl.LightningDataModule):
             self.test_data = NeuronSegmentationDataset(self.data_dir, preprocessing=self.preprocessing, transform_args=self.transform_args)
 
     def train_dataloader(self):
-        return DataLoader(self.train_data, batch_size=self.train_batch_size, num_workers=8)
+        return DataLoader(self.train_data, pin_memory=True, batch_size=self.train_batch_size, num_workers=self.num_workers, shuffle=True, drop_last=True)
 
     def val_dataloader(self):
-        return DataLoader(self.val_data, batch_size=self.val_batch_size, num_workers=8)
+        return DataLoader(self.val_data, pin_memory=True, batch_size=self.val_batch_size, num_workers=self.num_workers)
 
     def test_dataloader(self):
-        return DataLoader(self.test_data, batch_size=self.test_batch_size, num_worker=8)
+        return DataLoader(self.test_data, pin_memory=True, batch_size=self.test_batch_size, num_worker=self.num_workers)
         
     @staticmethod
     def add_data_module_specific_args(parent_parser):
@@ -83,18 +85,18 @@ class HidaDataLoader(pl.LightningDataModule):
                             help="Name of the experiment you are running.")
         parser.add_argument("--train_folds", nargs='*', default=get_os('TRAIN_FOLDS'),
                             help="Set name to which operation is applied to.")
-        parser.add_argument("--train_batch_size", action="store_true", default=int(get_os('TRAIN_BATCH_SIZE', 8)),
+        parser.add_argument("--train_batch_size", type=int, default=int(get_os('TRAIN_BATCH_SIZE', 8)),
                             help="Train batch size.")
         parser.add_argument("--val_folds", nargs='*', default=get_os('VAL_FOLDS'),
                             help="Set name to which operation is applied to.")
-        parser.add_argument("--val_batch_size", action="store_true", default=int(get_os('VAL_BATCH_SIZE', 8)),
+        parser.add_argument("--val_batch_size", type=int, default=int(get_os('VAL_BATCH_SIZE', 8)),
                             help="Eval batch size.")
         parser.add_argument("--test", nargs='*', default=get_os('TEST'),
                             help="Set name to which operation is applied to.")
-        parser.add_argument("--test_batch_size", action="store_true", default=int(get_os('TEST_BATCH_SIZE', 8)),
+        parser.add_argument("--test_batch_size", type=int, default=int(get_os('TEST_BATCH_SIZE', 8)),
                             help="Eval batch size.")
-        parser.add_argument("--transform_args", action="store_true", default=None,
-                            help="Transform arguments.")
+        parser.add_argument("--num_workers", type=int, default=int(get_os('NUM_WORKERS', 8)),
+                            help="Number of CPU cores used for data loading.")
 
         return parser
 
@@ -108,15 +110,15 @@ if __name__ == "__main__":
     parser = HidaDataLoader.add_data_module_specific_args(parser)
     args = parser.parse_args()
 
-    transform_args = {"vflip_chance":0.5, "rotation_chance": 0.5, "rotation_angle": 30, "normalize_mean": [0.485, 0.456, 0.406], "normalize_std": [0.229, 0.224, 0.225]}
+    transform_args = {"vflip_chance":0.5, "rotation_chance": 0.5, "rotation_angle": 30, "size": 256}
 
 
-    preprocessing_fn = smp.encoders.get_preprocessing_fn('se_resnext50_32x4d', pretrained='imagenet')
-
+    #preprocessing_fn = smp.encoders.get_preprocessing_fn('se_resnext50_32x4d', pretrained='imagenet')
+    preprocessing_params = smp.encoders.get_preprocessing_params('se_resnext50_32x4d', pretrained='imagenet')
 
     dm = HidaDataLoader(
         transform_args=transform_args,
-        preprocessing=preprocessing_fn,
+        preprocessing=preprocessing_params,
         data_dir=args.data_dir,
         train_batch_size=args.train_batch_size,
         val_batch_size=args.val_batch_size,
@@ -127,8 +129,8 @@ if __name__ == "__main__":
 
     # splits/transforms
     dm.setup('fit')
-    batch = list(dm.train_dataloader())
-    # print(batch[0])
+    for batch in dm.train_dataloader():
+        print(batch)
     # print('training')
     # batch = list(dm.val_dataloader())
     # print(batch[0])

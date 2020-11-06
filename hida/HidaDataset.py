@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 from PIL import Image
 
-DEFAULT_TRANSFORM_ARGS = {"vflip_chance":0.5, "rotation_chance": 0.5, "rotation_angle": 30, "normalize_mean": [0.485, 0.456, 0.406], "normalize_std": [0.229, 0.224, 0.225]}
+DEFAULT_TRANSFORM_ARGS = {"vflip_chance":0.5, "rotation_chance": 0.5, "rotation_angle": 30, "size": 256}
 DATA_ROOT_PATH = "/home/ksquare/repositories/datathon/data/ufz_im_challenge/"
 
 
@@ -44,20 +44,33 @@ class NeuronSegmentationDataset(VisionDataset):
         self.mean = preprocessing["mean"]
         self.std = preprocessing["std"]
 
-    def my_transform(self, img, seg):
-        # flipping
-        if random.random() < self.transform_args["vflip_chance"]:
-            img = TF.vflip(img)
-            seg = TF.vflip(seg)
+    def my_transform(self, img, mask):
+
+        if mask is not None:
+            mask = torch.as_tensor(mask, dtype=torch.int64)
+
         # rotate
         if random.random() < self.transform_args["rotation_chance"]:
             angle = random.randint(-1 * self.transform_args["rotation_angle"], self.transform_args["rotation_angle"])
             img = TF.rotate(img, angle)
-            seg = TF.rotate(seg, angle)
+            if mask is not None:
+                mask = TF.rotate(mask, angle)
 
-        img = TF.resize(img, [1024, 1024] )
-        seg = TF.resize(img, [1024, 1024] )
-        return img, seg
+        # to Tensor
+        img = TF.to_tensor(img)
+        # normalize 
+        img = TF.normalize(tensor=img, mean=self.mean, std=self.std)
+        # flipping
+        if random.random() < self.transform_args["vflip_chance"]:
+            img = TF.vflip(img)
+            if mask is not None:
+                mask = TF.vflip(mask)
+        
+        # resize
+        img = TF.resize(img, [self.transform_args["size"], self.transform_args["size"]] )
+        if mask is not None:
+            mask = TF.resize(mask, [self.transform_args["size"], self.transform_args["size"]] )
+        return img, mask
 
     def __len__(self):
         return len(self.samples)
@@ -68,41 +81,18 @@ class NeuronSegmentationDataset(VisionDataset):
         # shape (3 x 600 x 800)
         if self.testing is False:
             seg = self.loader(img_path.with_suffix(".png"))
-            #seg(600,800,3)
+            seg = np.asarray(seg)[:, :, 0]
+            # seg(600, 800)
+            masks = [(seg == v) for v in self.class_to_idx.values()]
+            mask = np.stack(masks, axis=0)
+            # mask = torch.as_tensor(mask, dtype=torch.int64)
+            # shape ()0, 600, 800 
         else:
-            seg = torch.zeros_like(img)[0].unsqueeze(2)
-            #shape(600.,800,1)
-
-        # apply augmentations
-        #img = torch.from_numpy(TF.to_tensor(img).numpy())
-        img, seg = self.my_transform(img, seg)
-        seg = np.asarray(seg)
-        seg = seg[:,:,0]
-        #seg(600,,800)
-
-        masks = [(seg == v) for v in self.class_to_idx.values()]
-        mask = np.stack(masks, axis=-1).astype('float')
-        #seg(600,,800,20)
-
+            mask=None
         
-        # apply preprocessing
-        if self.preprocessing:
-            img = np.asarray(img)
-            sample = self.preprocessing(image=img, mask=mask)
-            image, mask = sample['image'], sample['mask']
-            img = torch.as_tensor(img, dtype=torch.float32)
-            mask = torch.as_tensor(mask, dtype=torch.int64)
-        else:
-            # to Tensor
-            img = torch.as_tensor(img, dtype=torch.float32)
-            mask = torch.as_tensor(mask, dtype=torch.int64)
-            # normalize 
-            img = TF.normalize(tensor=img, mean=self.transform_args["normalize_mean"], std=self.transform_args["normalize_std"])
-        
-        img = img.permute(2, 0, 1)
-        mask = mask.permute(2, 0, 1)
-        if self.testing:
-            return img
+        # apply transforms
+        img, mask = self.my_transform(img, mask)
+
         return img, mask
         
 
